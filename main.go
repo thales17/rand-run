@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -46,16 +47,6 @@ func parseRunnableCSV(csvPath string) ([]runnable, error) {
 			flags:   items[1:],
 		})
 	}
-	// TODO: return created runnable
-	/*	games := []string{"vsav", "invaders"}
-		runnables := []runnable{}
-		for _, g := range games {
-			r := runnable{
-				command: "c:/Users/richa/Documents/fba64_029743/fba64.exe",
-				flags:   []string{g, "-w"},
-			}
-			runnables = append(runnables, r)
-		}*/
 
 	return runnables, nil
 }
@@ -63,8 +54,10 @@ func parseRunnableCSV(csvPath string) ([]runnable, error) {
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
 	fmt.Println("Random Run!")
+	csvPath := flag.String("csv", "test.csv", "Path runnable csv, first column is the command the rest are the flags")
+	flag.Parse()
 
-	runnables, err := parseRunnableCSV("test.csv")
+	runnables, err := parseRunnableCSV(*csvPath)
 	if err != nil {
 		log.Fatal(err)
 	}
