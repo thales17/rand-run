@@ -12,12 +12,13 @@ import (
 	"time"
 )
 
-type runnable struct {
+type Runnable struct {
 	command string
 	flags   []string
 }
 
-func run(r runnable) error {
+func run(r Runnable) error {
+	fmt.Printf("Randomly Running: %s %s", r.command, strings.Join(r.flags, " "))
 	cmd := exec.Command(r.command, r.flags...)
 	cmd.Env = os.Environ()
 
@@ -29,20 +30,19 @@ func run(r runnable) error {
 	return nil
 }
 
-func parseRunnableCSV(csvPath string) ([]runnable, error) {
+func parseRunnableCSV(csvPath string) ([]Runnable, error) {
 	content, err := ioutil.ReadFile(csvPath)
 	if err != nil {
 		return nil, err
 	}
-
 	lines := strings.Split(string(content), "\n")
-	runnables := []runnable{}
+	runnables := []Runnable{}
 	for _, l := range lines {
 		items := strings.Split(l, ",")
 		if len(items) < 2 {
 			continue
 		}
-		runnables = append(runnables, runnable{
+		runnables = append(runnables, Runnable{
 			command: items[0],
 			flags:   items[1:],
 		})
@@ -53,7 +53,6 @@ func parseRunnableCSV(csvPath string) ([]runnable, error) {
 
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
-	fmt.Println("Random Run!")
 	csvPath := flag.String("csv", "test.csv", "Path runnable csv, first column is the command the rest are the flags")
 	flag.Parse()
 
@@ -72,7 +71,9 @@ func main() {
 	}()
 
 	go func() {
+		time.Sleep(time.Second * 1)
 		totalSeconds := 0
+		fmt.Println("\n***************************")
 		for {
 			hours := totalSeconds / 3600
 			seconds := totalSeconds - (hours * 3600)
