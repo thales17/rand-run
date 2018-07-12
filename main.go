@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +16,17 @@ import (
 	"github.com/boltdb/bolt"
 )
 
+const bucketName string = "rand-run-bucket"
+
 type Runnable struct {
 	command string
+	name    string
 	flags   []string
+}
+
+type RunRecord struct {
+	name    string
+	seconds int
 }
 
 func run(r Runnable) error {
@@ -42,12 +51,15 @@ func parseRunnableCSV(csvPath string) ([]Runnable, error) {
 	runnables := []Runnable{}
 	for _, l := range lines {
 		items := strings.Split(l, ",")
-		if len(items) < 2 {
+		if len(items) < 3 {
+			log.Println("Skipping", l)
 			continue
 		}
+
 		runnables = append(runnables, Runnable{
-			command: items[0],
-			flags:   items[1:],
+			name:    items[0],
+			command: items[1],
+			flags:   items[2:],
 		})
 	}
 
@@ -62,15 +74,16 @@ func getIntFromByteSlice(bs []byte) (int, error) {
 	return strconv.Atoi(string(bs))
 }
 
-func main() {
-	rand.Seed(time.Now().UTC().UnixNano())
-	csvPath := flag.String("csv", "test.csv", "Path runnable csv, first column is the command the rest are the flags")
-	flag.Parse()
+func secondsToTimeString(seconds int) string {
+	h := seconds / 3600
+	s := seconds - (h * 3600)
+	m := s / 60
+	s -= (m * 60)
 
-	runnables, err := parseRunnableCSV(*csvPath)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return fmt.Sprintf("%d hours, %d minutes, %d seconds", h, m, s)
+}
+
+func randomRun(runnables []Runnable, dbPath string) chan struct{} {
 	randIndex := rand.Intn(len(runnables))
 	runDoneCh := make(chan struct{})
 	go func() {
@@ -81,23 +94,21 @@ func main() {
 		}
 	}()
 	r := runnables[randIndex]
-	runKey := fmt.Sprintf("%s %s", r.command, strings.Join(r.flags, " "))
+	runKey := r.name
 	doneCh := make(chan struct{})
 	go func() {
-		db, err := bolt.Open("rand-run.db", 0600, nil)
+		db, err := bolt.Open(dbPath, 0600, nil)
 		defer db.Close()
 		if err != nil {
 			log.Fatal(err)
 		}
 		timerDoneCh := make(chan struct{})
 		err = db.Update(func(tx *bolt.Tx) error {
-			b, err := tx.CreateBucketIfNotExists([]byte("rand-run-bucket"))
+			b, err := tx.CreateBucketIfNotExists([]byte(bucketName))
 			if err != nil {
 				return err
 			}
-			//			fmt.Println("\n*****\nBucket:", b)
 			time.Sleep(time.Second * 1)
-			//		fmt.Println("\n******\nRunKey:", runKey)
 			totalSeconds, err := getIntFromByteSlice(b.Get([]byte(runKey)))
 			if err != nil {
 				log.Println(err)
@@ -110,12 +121,7 @@ func main() {
 					close(timerDoneCh)
 					return nil
 				default:
-					hours := totalSeconds / 3600
-					seconds := totalSeconds - (hours * 3600)
-					minutes := seconds / 60
-					seconds -= (minutes * 60)
-
-					fmt.Printf("\r%d hours, %d minutes, %d seconds", hours, minutes, seconds)
+					fmt.Printf("\r%s", secondsToTimeString(totalSeconds))
 					time.Sleep(time.Second)
 					err := b.Put([]byte(runKey), getByteSliceFromInt(totalSeconds))
 					if err != nil {
@@ -137,9 +143,60 @@ func main() {
 			close(doneCh)
 		}
 	}()
+	return doneCh
+}
 
-	select {
-	case <-doneCh:
-		fmt.Println("\nGoodbye!")
+func listRunTime(dbPath string) {
+	db, err := bolt.Open(dbPath, 0600, nil)
+	if err != nil {
+		log.Fatal("Db Open error", err)
 	}
+	runRecords := []RunRecord{}
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			seconds, e := getIntFromByteSlice(v)
+			if e != nil {
+				log.Fatal(e)
+			}
+			runRecords = append(runRecords, RunRecord{name: string(k), seconds: seconds})
+		}
+		db.Close()
+		sort.Slice(runRecords, func(i, j int) bool {
+			return runRecords[i].seconds > runRecords[j].seconds
+		})
+		for i, r := range runRecords {
+			fmt.Printf("%d. %s: %s\n", i+1, r.name, secondsToTimeString(r.seconds))
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+}
+
+func main() {
+	rand.Seed(time.Now().UTC().UnixNano())
+	csvPath := flag.String("csv", "test.csv", "Path to runnable csv, first the name, the next column is the command the rest are the flags")
+	dbPath := flag.String("db", "rand-run.db", "Path to db")
+	list := flag.Bool("list", false, "List the times for all programs in db")
+	flag.Parse()
+
+	if !*list {
+		runnables, err := parseRunnableCSV(*csvPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		doneCh := randomRun(runnables, *dbPath)
+
+		select {
+		case <-doneCh:
+			fmt.Println("\nGoodbye!")
+		}
+	} else {
+		listRunTime(*dbPath)
+	}
+
 }
